@@ -53,7 +53,7 @@ bot.onText(/\/start/, (msg) => {
     );
   } else {
     bot.sendMessage(chatId,
-      "Hi! To use this bot, please log in first.\n\nUse /login to sign in with your account."
+      "Hello, Welcome to the SeeFood bot! To use this bot, please log in first.\n\nUse /login to sign in with your account."
     );
   }
 });
