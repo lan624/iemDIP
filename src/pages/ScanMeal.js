@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/ScanMeal.css";
 import seefoodLogo from "../assets/images/seefood-logo.jpg";
@@ -10,39 +10,27 @@ export default function ScanMeal() {
 
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
-  const [telegramImageUrl, setTelegramImageUrl] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
   const [toast, setToast] = useState("");
+  const [chatId, setChatId] = useState(localStorage.getItem("seefood_telegram_chat_id") || "");
 
-  // Telegram upload flow
-  const [showTelegramInput, setShowTelegramInput] = useState(false);
-  const [telegramUsername, setTelegramUsername] = useState("");
-  const [telegramStatus, setTelegramStatus] = useState("idle"); // idle | requesting | waiting | ready
-  const pollIntervalRef = useRef(null);
-
-  // Clean up polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
-  }, []);
-
-  const sampleResult = useMemo(
-    () => ({
-      name: "Chicken quinoa bowl",
-      calories: 520,
-      macros: { protein: 38, carbs: 54, fats: 16 },
-      highlights: ["High protein", "Balanced carbs", "Good fiber"],
-      suggestions: ["Add more greens for micronutrients", "Choose low-sugar sauce"],
-    }),
-    []
-  );
+  const userId = useMemo(() => localStorage.getItem("seefood_user_id") || "", []);
 
   function showToast(msg) {
     setToast(msg);
     window.clearTimeout(window.__seefood_toast_scan_meal);
     window.__seefood_toast_scan_meal = window.setTimeout(() => setToast(""), 1700);
+  }
+
+  function onPickFile(e) {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+
+    setFile(picked);
+    const url = URL.createObjectURL(picked);
+    setPreviewUrl(url);
+    setResult(null);
   }
 
   function onPickFile(e) {
@@ -56,95 +44,56 @@ export default function ScanMeal() {
 
   function clearFile() {
     setFile(null);
-    if (previewUrl && !telegramImageUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl("");
-    setTelegramImageUrl(null);
     setResult(null);
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
+  }
+
+  function onChatIdChange(e) {
+    const val = e.target.value.trim();
+    setChatId(val);
+    if (val) {
+      localStorage.setItem("seefood_telegram_chat_id", val);
+    } else {
+      localStorage.removeItem("seefood_telegram_chat_id");
     }
-    setTelegramStatus("idle");
-    setShowTelegramInput(false);
-    setTelegramUsername("");
   }
 
   async function analyze() {
-    if (!file && !telegramImageUrl) {
+    if (!file) {
       showToast("Please upload a meal photo first.");
       return;
     }
     setIsAnalyzing(true);
 
-    // Mock delay (replace with API call later)
-    await new Promise((r) => setTimeout(r, 900));
-
-    setResult(sampleResult);
-    setIsAnalyzing(false);
-    showToast("Analysis complete ✅");
-  }
-
-  // --- Telegram upload flow ---
-
-  function openTelegramFlow() {
-    setShowTelegramInput(true);
-    setTelegramStatus("idle");
-  }
-
-  async function requestTelegramPhoto() {
-    const username = telegramUsername.trim();
-    if (!username) {
-      showToast("Please enter your Telegram username.");
-      return;
-    }
-
-    setTelegramStatus("requesting");
-
     try {
-      const res = await fetch(`${API_URL}/telegram/request-photo`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telegramUsername: username }),
+      // Convert image to base64 for the API request
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
 
-      const data = await res.json();
+      const body = { image: base64 };
+      if (userId) body.userId = userId;
+      if (chatId) body.chatId = chatId;
 
-      if (!res.ok) {
-        showToast(data.message || "Failed to send request.");
-        setTelegramStatus("idle");
-        return;
-      }
+      const resp = await fetch(`${API_URL}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-      const { requestId: newRequestId } = data;
-      setTelegramStatus("waiting");
-      showToast("📱 Check Telegram! Send a photo of your meal.");
-
-      // Poll for photo availability
-      pollIntervalRef.current = setInterval(async () => {
-        try {
-          const statusRes = await fetch(
-            `${API_URL}/telegram/photo-status/${newRequestId}`
-          );
-          const statusData = await statusRes.json();
-
-          if (statusData.status === "ready" && statusData.imageUrl) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-            setTelegramImageUrl(statusData.imageUrl);
-            setPreviewUrl(statusData.imageUrl);
-            setFile(null);
-            setTelegramStatus("ready");
-            setShowTelegramInput(false);
-            setResult(null);
-            showToast("✅ Photo received from Telegram!");
-          }
-        } catch (_) {
-          // Continue polling on transient errors
-        }
-      }, 3000);
+      if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+      const data = await resp.json();
+      setResult(data);
+      showToast(chatId ? "Analysis complete ✅ – check Telegram!" : "Analysis complete ✅");
     } catch (err) {
-      showToast("Failed to connect to the server.");
-      setTelegramStatus("idle");
+      console.error(err);
+      showToast("Analysis failed. Is the API running?");
+    } finally {
+      setIsAnalyzing(false);
     }
   }
 
@@ -200,9 +149,7 @@ export default function ScanMeal() {
           <div className="panel">
             <div className="panel-head">
               <h2>Upload</h2>
-              <span className="pill">
-                {file || telegramImageUrl ? "1 file selected" : "No file"}
-              </span>
+              <span className="pill">{file ? "1 file selected" : "No file"}</span>
             </div>
 
             <div className={`dropzone ${previewUrl ? "has-preview" : ""}`}>
@@ -217,56 +164,43 @@ export default function ScanMeal() {
               )}
             </div>
 
-            {/* Telegram upload section */}
-            {showTelegramInput ? (
-              <div className="telegram-section">
-                <label className="telegram-label">Your Telegram username</label>
-                <div className="telegram-row">
-                  <input
-                    className="telegram-input"
-                    type="text"
-                    placeholder="@username"
-                    value={telegramUsername}
-                    onChange={(e) => setTelegramUsername(e.target.value)}
-                    disabled={telegramStatus === "waiting"}
-                  />
-                  <button
-                    className="primary-btn"
-                    onClick={requestTelegramPhoto}
-                    disabled={telegramStatus === "requesting" || telegramStatus === "waiting"}
-                  >
-                    {telegramStatus === "waiting" ? "Waiting…" : "Request Photo"}
-                  </button>
-                </div>
-                {telegramStatus === "waiting" && (
-                  <div className="telegram-hint">
-                    📱 Open Telegram and send your meal photo to the SeeFood bot.
-                  </div>
-                )}
-              </div>
-            ) : null}
-
             <div className="upload-actions">
-              <label className="file-btn">
-                Choose file
-                <input type="file" accept="image/*" onChange={onPickFile} disabled={telegramStatus === "waiting"} />
-              </label>
-
               <button className="telegram-btn" onClick={openTelegramFlow} disabled={telegramStatus === "waiting"}>
                 📱 Upload from Telegram
               </button>
 
-              <button className="ghost-btn" onClick={clearFile} disabled={!file && !telegramImageUrl && telegramStatus !== "waiting"}>
+              <button className="ghost-btn" onClick={clearFile} disabled={!file}>
                 Clear
               </button>
 
-              <button className="primary-btn" onClick={analyze} disabled={isAnalyzing || (!file && !telegramImageUrl)}>
+              <button className="primary-btn" onClick={analyze} disabled={isAnalyzing || !file}>
                 {isAnalyzing ? "Analyzing..." : "Analyze"}
               </button>
             </div>
 
             <div className="hint">
               Tip: Use a clear photo in good lighting for better results.
+            </div>
+
+            <div className="hint" style={{ marginTop: "0.5rem" }}>
+              <label htmlFor="chatId-input" style={{ display: "block", marginBottom: "0.25rem" }}>
+                📬 Telegram Chat ID <span style={{ fontWeight: 400 }}>(optional – receive results in Telegram)</span>
+              </label>
+              <input
+                id="chatId-input"
+                type="text"
+                placeholder="e.g. 123456789 – message @userinfobot to find yours"
+                value={chatId}
+                onChange={onChatIdChange}
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.6rem",
+                  borderRadius: "6px",
+                  border: "1px solid #d1d5db",
+                  fontSize: "0.85rem",
+                  boxSizing: "border-box",
+                }}
+              />
             </div>
           </div>
 
