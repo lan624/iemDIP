@@ -97,6 +97,30 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
+exports.updateGrocery = async (req, res) => {
+  try {
+    const { groceryItems } = req.body;
+    const userId = req.params.id;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { groceryItems },
+      { new: true }
+    ).select("-password_hash");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      message: "Grocery list updated",
+      user
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // login and getUserInfo remain mostly the same, 
 // though they will now return the new fields automatically.
 exports.login = async (req, res) => {

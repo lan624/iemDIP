@@ -35,7 +35,15 @@ const userSchema = new mongoose.Schema({
   // (Keeping your previous arrays in case they appear in later steps)
   restrictions: [String], 
   dislikes: [String],     
-  goals: [String],        
+  goals: [String], 
+  groceryItems: [
+    {
+      name: { type: String, required: true },
+      category: { type: String, default: "General" },
+      checked: { type: Boolean, default: false }
+    }
+  ],
+         
   created_at: { type: Date, default: Date.now }
 });
 
